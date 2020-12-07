@@ -17,7 +17,7 @@ struct ContentView: View {
             Text("\(manager.state.rawValue)")
             Button(action: {
                 print("initCentral")
-                manager.delegate = delegate;
+                manager.delegate = delegate
             }, label: {
                 Text("initCentral")
             })
@@ -58,16 +58,24 @@ struct ContentView: View {
             })
             HStack {
                 Button(action: {
-                    print("setNotifiable")
-                    delegate.setNotifiable(CHAR__COMMAND_RESPONSE, of: SERV__COMMAND)
+                    print("configCharacteristic")
+                    delegate.configCharacteristic()
                 }, label: {
-                    Text("setNotifiable")
+                    Text("configCharacteristic")
                 })
                 Button(action: {
                     print("checkAccess")
                     delegate.checkAccess()
                 }, label: {
                     Text("checkAccess")
+                })
+            }
+            HStack {
+                Button(action: {
+                    print("getLargeDataInfo")
+                    delegate.getLargeDataInfo()
+                }, label: {
+                    Text("getLargeDataInfo")
                 })
             }
         }
@@ -82,23 +90,44 @@ struct ContentView: View {
 
 let WOODEMI_PREFIX = Data(bytes: [0x57, 0x44, 0x4d]) // "WDM"
 
-let SUFFIX = "ba5e-f4ee-5ca1-eb1e5e4b1ce0";
+let SUFFIX = "ba5e-f4ee-5ca1-eb1e5e4b1ce0"
 let SERV__COMMAND = "57444d01-\(SUFFIX)"
 let CHAR__COMMAND_REQUEST = "57444e02-\(SUFFIX)"
 let CHAR__COMMAND_RESPONSE = CHAR__COMMAND_REQUEST
 
+let SERV__FILE_INPUT = "57444d03-\(SUFFIX)"
+let CHAR__FILE_INPUT_CONTROL_REQUEST = "57444d04-\(SUFFIX)"
+let CHAR__FILE_INPUT_CONTROL_RESPONSE = CHAR__FILE_INPUT_CONTROL_REQUEST
+let CHAR__FILE_INPUT = "57444d05-\(SUFFIX)"
+
+let imageId = Data(bytes: [0x00, 0x01])
+let imageVersion = Data(bytes: [
+    0x01, 0x00, 0x00, // Build Version
+    0x41, // Stack Version
+    0x11, 0x11, 0x11, // Hardware Id
+    0x01 // Manufacturer Id
+])
+
 extension ContentView {
     class Delegate: NSObject {
         var peripheral: CBPeripheral?
+        
+        func configCharacteristic() {
+            let command = peripheral!.getCharacteristic(CHAR__COMMAND_RESPONSE, of: SERV__COMMAND)
+            peripheral!.setNotifyValue(true, for: command)
 
-        func setNotifiable(_ characteristic: String, of service: String) {
-            let c = peripheral!.getCharacteristic(characteristic, of: service)
-            peripheral!.setNotifyValue(true, for: c)
+            let inputControl = peripheral!.getCharacteristic(CHAR__FILE_INPUT_CONTROL_RESPONSE, of: SERV__FILE_INPUT)
+            peripheral!.setNotifyValue(true, for: inputControl)
         }
 
         func checkAccess() {
             let c = peripheral!.getCharacteristic(CHAR__COMMAND_REQUEST, of: SERV__COMMAND)
             peripheral!.writeValue(Data(bytes: [0x01, 0x0A, 0x00, 0x00, 0x00, 0x01]), for: c, type: .withResponse)
+        }
+        
+        func getLargeDataInfo() {
+            let c = peripheral!.getCharacteristic(CHAR__FILE_INPUT_CONTROL_REQUEST, of: SERV__FILE_INPUT)
+            peripheral!.writeValue(Data(bytes: [0x02]) + imageId + imageVersion, for: c, type: .withResponse)
         }
     }
 }
