@@ -51,8 +51,7 @@ struct ContentView: View {
             }
             Button(action: {
                 print("initPeripheral")
-                delegate.peripheral?.delegate = delegate
-                delegate.peripheral?.discoverServices(nil)
+                delegate.initPeripheral()
             }, label: {
                 Text("initPeripheral")
             })
@@ -76,6 +75,12 @@ struct ContentView: View {
                     delegate.getLargeDataInfo()
                 }, label: {
                     Text("getLargeDataInfo")
+                })
+                Button(action: {
+                    print("requestNextBlock")
+                    delegate.requestNextBlock()
+                }, label: {
+                    Text("requestNextBlock")
                 })
             }
         }
@@ -111,23 +116,68 @@ let imageVersion = Data(bytes: [
 extension ContentView {
     class Delegate: NSObject {
         var peripheral: CBPeripheral?
-        
+        var maxChunkSize: Int!
+        var maxBlockSize: Int!
+
+        func initPeripheral() {
+            peripheral!.delegate = self
+            peripheral!.discoverServices(nil)
+            maxChunkSize = peripheral!.maximumWriteValueLength(for: .withoutResponse) - 2
+            maxBlockSize = (0xFF + 1) * maxChunkSize
+        }
+
         func configCharacteristic() {
             let command = peripheral!.getCharacteristic(CHAR__COMMAND_RESPONSE, of: SERV__COMMAND)
             peripheral!.setNotifyValue(true, for: command)
 
             let inputControl = peripheral!.getCharacteristic(CHAR__FILE_INPUT_CONTROL_RESPONSE, of: SERV__FILE_INPUT)
             peripheral!.setNotifyValue(true, for: inputControl)
+
+            let input = peripheral!.getCharacteristic(CHAR__FILE_INPUT, of: SERV__FILE_INPUT)
+            peripheral!.setNotifyValue(true, for: input)
         }
 
         func checkAccess() {
             let c = peripheral!.getCharacteristic(CHAR__COMMAND_REQUEST, of: SERV__COMMAND)
             peripheral!.writeValue(Data(bytes: [0x01, 0x0A, 0x00, 0x00, 0x00, 0x01]), for: c, type: .withResponse)
         }
-        
+
         func getLargeDataInfo() {
             let c = peripheral!.getCharacteristic(CHAR__FILE_INPUT_CONTROL_REQUEST, of: SERV__FILE_INPUT)
             peripheral!.writeValue(Data(bytes: [0x02]) + imageId + imageVersion, for: c, type: .withResponse)
+        }
+
+        var totalSize = 0
+
+        private func handleFileInputControl(response: Data) {
+            self.totalSize = numericCast(UInt32(first: response.advanced(by: 1 + 2 + 8))!)
+            let (quotient, remainder) = totalSize.quotientAndRemainder(dividingBy: maxBlockSize)
+            let blockCountCeil = quotient + (remainder != 0 ? 1 : 0)
+            print("totalSize: \(totalSize), blockCountCeil: \(blockCountCeil)")
+        }
+
+        var currentPos = 0
+        var currentBlockIndex = 0
+
+        let transferMethod = 0
+        let l2capChannelOrPsm = 4
+
+        func requestNextBlock() {
+            let blockTotalSize = min(totalSize - currentPos, maxBlockSize)
+            let (quotient, remainder) = blockTotalSize.quotientAndRemainder(dividingBy: maxChunkSize)
+            let chunkCountCeil = quotient + (remainder != 0 ? 1 : 0)
+            print("blockTotalSize: \(blockTotalSize), chunkCountCeil: \(chunkCountCeil)")
+
+            let config = UInt8(transferMethod).data + UInt16(l2capChannelOrPsm).data
+            let requestData = imageId + UInt32(currentPos).data + UInt32(blockTotalSize).data + UInt16(maxChunkSize).data + config
+            let c = peripheral!.getCharacteristic(CHAR__FILE_INPUT_CONTROL_REQUEST, of: SERV__FILE_INPUT)
+            peripheral!.writeValue(Data(bytes: [0x04]) + requestData, for: c, type: .withResponse)
+        }
+        
+        func handleFileInput(data: Data) {
+            if (data.first == 0x05) {
+                print("recieve chunk: index(\(data[1])), length(\(data.count - 1))")
+            }
         }
     }
 }
@@ -180,7 +230,16 @@ extension ContentView.Delegate: CBPeripheralDelegate {
     }
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
-        print("peripheral:didUpdateValueForForCharacteristic \(characteristic.uuid) \(characteristic.value as! NSData) error: \(error)")
+        let data = characteristic.value!
+        print("peripheral:didUpdateValueForForCharacteristic \(characteristic.uuid) \(data as! NSData) error: \(error)")
+        switch characteristic.uuid.uuidStr {
+        case CHAR__FILE_INPUT_CONTROL_RESPONSE:
+            handleFileInputControl(response: data)
+        case CHAR__FILE_INPUT:
+            handleFileInput(data: data)
+        default:
+            print("unhandle")
+        }
     }
 }
 
@@ -203,5 +262,34 @@ extension CBPeripheral {
             $0.uuid.uuidStr == characteristic || "0000\($0.uuid.uuidStr)-\(GSS_SUFFIX)" == characteristic
         }
         return c!
+    }
+}
+
+extension UInt8: DataConvertible {
+}
+
+extension UInt16: DataConvertible {
+}
+
+extension UInt32: DataConvertible {
+}
+
+public protocol DataConvertible {
+    var data: Data { get }
+}
+
+extension DataConvertible {
+    public init?(first: Data) {
+        guard first.count >= MemoryLayout<Self>.size else {
+            return nil
+        }
+        self = first.withUnsafeBytes {
+            $0.pointee
+        }
+    }
+
+    public var data: Data {
+        var value = self
+        return Data(buffer: UnsafeBufferPointer(start: &value, count: 1))
     }
 }
