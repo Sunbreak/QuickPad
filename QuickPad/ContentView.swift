@@ -78,6 +78,8 @@ struct ContentView: View {
                 })
                 Button(action: {
                     print("requestNextBlock")
+                    delegate.receivedCeilCount = 0
+                    delegate.receivedChunk = 0
                     delegate.requestNextBlock()
                 }, label: {
                     Text("requestNextBlock")
@@ -174,9 +176,16 @@ extension ContentView {
             peripheral!.writeValue(Data(bytes: [0x04]) + requestData, for: c, type: .withResponse)
         }
         
+        var receivedCeilCount: Int!
+        var receivedChunk: Int!
+        
         func handleFileInput(data: Data) {
             if (data.first == 0x05) {
-                print("recieve chunk: index(\(data[1])), length(\(data.count - 1))")
+                print("recieve chunk: index(\(data[1])), length(\(data.count - 2))")
+                
+                receivedCeilCount += 1
+                receivedChunk += (data.count - 2)
+                print("receivedCeilCount = \(receivedCeilCount)  receivedChunk = \(receivedChunk)")
             }
         }
     }
